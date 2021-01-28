@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+
+import logging
+import sys
+import os
+from Xlib import X, display, XK
+
+class NoWM():
+  TERMINAL = ["/usr/bin/x-terminal-emulator"]
+  BROWSER = ["xdg-open", "https://"]
+
+
+  # mod1 = alt, mod4 = super
+  MODIFIER = X.ControlMask | X.Mod1Mask | X.ShiftMask
+  #MODIFIER = X.ControlMask | X.Mod1Mask
+  KEY_HANDLERS = [
+    (MODIFIER, XK.XK_BackSpace, 'exit_wm'),
+    (MODIFIER, XK.XK_equal, 'restart_wm'),
+    (MODIFIER, XK.XK_Left, 'handle_left'),
+    (MODIFIER, XK.XK_h, 'handle_left'),
+    (MODIFIER, XK.XK_Right, 'handle_right'),
+    (MODIFIER, XK.XK_l, 'handle_right'),
+    (MODIFIER, XK.XK_Return, 'handle_return'),
+    (MODIFIER, XK.XK_Up, 'handle_up'),
+    (MODIFIER, XK.XK_Down, 'handle_down'),
+    (MODIFIER, XK.XK_u, 'handle_topleft'),
+    (MODIFIER, XK.XK_i, 'handle_topright'),
+    (MODIFIER, XK.XK_j, 'handle_bottomleft'),
+    (MODIFIER, XK.XK_k, 'handle_bottomright'),
+    (MODIFIER, XK.XK_t, 'handle_terminal'),
+    (MODIFIER, XK.XK_w, 'handle_browser'),
+    (X.Mod1Mask, XK.XK_Tab, 'handle_alttab'),
+    (X.Mod1Mask | X.ShiftMask, XK.XK_Tab, 'handle_alttab'),
+  ]
+
+  def __init__(self):
+    self.display = display.Display()
+    self.screen = self.display.screen()
+
+    self.windows = []
+    self.scan_windows()
+
+    self.key_handlers = {}
+
+    self.configure_root_events()
+    self.configure_key_handlers()
+
+  ###
+  ### EVENT HANDLERS
+  ###
+
+  def restart_wm(self, event):
+    logging.info("Restarting...")
+    os.execvp(sys.argv[0], [sys.argv[0]])
+
+  def exit_wm(self, event):
+    logging.info("Exiting...")
+    sys.exit(0)
+
+  def handle_terminal(self, event):
+    logging.debug(f"Starting terminal ({self.TERMINAL})...")
+    if(os.fork() == 0):
+        os.execvp(self.TERMINAL[0], self.TERMINAL)
+
+  def handle_browser(self, event):
+    logging.debug(f"Starting browser ({self.BROWSER})...")
+    if(os.fork() == 0):
+        os.execvp(self.BROWSER[0], self.BROWSER)
+
+  def handle_alttab(self, event):
+    logging.debug("Handling alt-tab")
+
+  def handle_left(self, event):
+    if event.state & X.Mod4Mask:
+        logging.warning("mod4 set")
+    logging.warning(f"LEFT {event}")
+    root_geometry = self.screen.root.get_geometry()
+    self.move_window_and_resize(window=event.child, x=0, y=0, width=root_geometry.width/2, height=root_geometry.height)
+
+  def handle_right(self, event):
+    root_geometry = self.screen.root.get_geometry()
+    self.move_window_and_resize(window=event.child, x=root_geometry.width / 2, y=0, width=root_geometry.width/2, height=root_geometry.height)
+
+  def handle_return(self, event):
+    root_geometry = self.screen.root.get_geometry()
+    self.move_window_and_resize(window=event.child, x=0, y=0, width=root_geometry.width, height=root_geometry.height)
+
+  def handle_up(self, event):
+    root_geometry = self.screen.root.get_geometry()
+    self.move_window_and_resize(window=event.child, x=0, y=0, width=root_geometry.width, height=root_geometry.height/2)
+
+  def handle_down(self, event):
+    root_geometry = self.screen.root.get_geometry()
+    self.move_window_and_resize(window=event.child, x=0, y=root_geometry.height/2, width=root_geometry.width, height=root_geometry.height/2)
+
+  def handle_topleft(self, event):
+    root_geometry = self.screen.root.get_geometry()
+    self.move_window_and_resize(window=event.child, x=0, y=0, width=root_geometry.width/2, height=root_geometry.height/2)
+
+  def handle_topright(self, event):
+    root_geometry = self.screen.root.get_geometry()
+    self.move_window_and_resize(window=event.child, x=root_geometry.width/2, y=0, width=root_geometry.width/2, height=root_geometry.height/2)
+
+  def handle_bottomleft(self, event):
+    root_geometry = self.screen.root.get_geometry()
+    self.move_window_and_resize(window=event.child, x=0, y=root_geometry.height/2, width=root_geometry.width/2, height=root_geometry.height/2)
+
+  def handle_bottomright(self, event):
+    root_geometry = self.screen.root.get_geometry()
+    self.move_window_and_resize(window=event.child, x=root_geometry.width/2, y=root_geometry.height/2, width=root_geometry.width/2, height=root_geometry.height/2)
+
+  ###
+  ### END EVENT HANDLERS
+  ###
+
+
+  ###
+  ### X HELPERS
+  ###
+  def move_window_and_resize(self, window, x, y, width=None, height=None):
+    current_geometry = window.get_geometry()
+    if not width:
+      width = current_geometry.width
+    if not height:
+      height = current_geometry.height
+
+    logging.debug(f"moving {window} @ {current_geometry} to {x},{y},{width},{height}")
+    window.set_input_focus(X.RevertToParent, 0)
+    window.configure(x=int(x), y=int(y), width=int(width), height=int(height))
+    window.raise_window()
+    window.warp_pointer(int(x) + int(width/2),int(y) + int(height/2))
+    window.map()
+    self.display.sync()
+
+  ###
+  ### SETUP
+  ###
+
+  def scan_windows(self):
+    for child in self.screen.root.query_tree().children:
+      if child.get_attributes().map_state:
+        logging.debug(f"Managing window: {child.get_wm_name()}")
+        self.windows.append(child)
+
+  def configure_root_events(self):
+    mask = (X.SubstructureRedirectMask | X.SubstructureNotifyMask | X.EnterWindowMask | X.LeaveWindowMask | X.FocusChangeMask)
+    self.screen.root.change_attributes(event_mask=mask)
+
+  def configure_key_handlers(self):
+    for modifier, keysym, handler_string in self.KEY_HANDLERS:
+      keycode = self.display.keysym_to_keycode(keysym)
+      func = getattr(self, handler_string, None)
+      logging.debug(f"mapping {keycode} to {handler_string}/{func}")
+      self.key_handlers[keycode] = func
+      self.screen.root.grab_key(keycode, modifier, True, X.GrabModeAsync, X.GrabModeAsync)
+
+  def handle_keypress(self, event):
+    logging.debug(f"got keypress event: {event}")
+    func = self.key_handlers.get(event.detail, None)
+    if func:
+      func(event)
+
+  def handle_keyrelease(self, event):
+    pass
+
+  def handle_configurenotify(self, event):
+    pass
+
+  def handle_focusout(self, event):
+    pass
+
+  def handle_focusin(self, event):
+    pass
+
+  def handle_enternotify(self, event):
+    pass
+
+  def handle_leavenotify(self, event):
+    pass
+
+  def handle_maprequest(self, event):
+    logging.debug(event)
+
+  def handle_configurerequest(self, event):
+    logging.debug(event)
+
+  def handle_event(self, event):
+    if event.type == X.KeyPress:
+      self.handle_keypress(event)
+    elif event.type == X.KeyRelease:
+      self.handle_keyrelease(event)
+    elif event.type == X.ConfigureNotify:
+      self.handle_configurenotify(event)
+    elif event.type == X.FocusIn:
+      self.handle_focusin(event)
+    elif event.type == X.FocusOut:
+      self.handle_focusout(event)
+    elif event.type == X.EnterNotify:
+      self.handle_enternotify(event)
+    elif event.type == X.LeaveNotify:
+      self.handle_leavenotify(event)
+    elif event.type == X.MapRequest:
+      self.handle_maprequest(event)
+    elif event.type == X.ConfigureRequest:
+      self.handle_configurerequest(event)
+    else:
+      logging.debug(f"Unknown event: {event}")
+
+
+  def main_loop(self):
+    while True:
+      self.handle_event(self.display.next_event())
+
+if __name__ == "__main__":
+  logging.basicConfig(level="DEBUG", format=">>%(asctime)s:%(levelname)s:%(name)s:%(funcName)s>> %(msg)s")
+  logging.info(f"starting {sys.argv[0]}")
+  logging.debug(f"DISPLAY={os.getenv('DISPLAY', None)}")
+  try:
+    NoWM().main_loop()
+  except KeyboardInterrupt:
+    logging.info("Keyboard Interrupt, exiting...")
+    sys.exit(0)
