@@ -3,6 +3,8 @@
 import logging
 import sys
 import os
+import argparse
+
 from Xlib import X, display, XK
 
 # xlib reference: https://tronche.com/gui/x/xlib
@@ -18,7 +20,8 @@ class NoWM():
   # How much to resize or move a window in free move
   MOVE_RESIZE_PIXELS=10
 
-  TERMINAL = ["/usr/bin/x-terminal-emulator"]
+  #TERMINAL = ["/usr/bin/x-terminal-emulator"]
+  TERMINAL = ["xterm", "-rv", "-ls"]
   BROWSER = ["xdg-open", "https://"]
 
 
@@ -43,6 +46,7 @@ class NoWM():
     (MODIFIER, XK.XK_k, 'handle_bottomright'),
     (MODIFIER, XK.XK_t, 'handle_terminal'),
     (MODIFIER, XK.XK_r, 'handle_browser'),
+    (MODIFIER, XK.XK_y, 'handle_xeyes'),
     (X.Mod1Mask, XK.XK_Tab, 'handle_alttab'),
     (X.Mod1Mask | X.ShiftMask, XK.XK_Tab, 'handle_alttab'),
     (MODIFIER, XK.XK_w, 'handle_wasd_up'),
@@ -82,7 +86,7 @@ class NoWM():
   def restart_wm(self, event):
     """Attempt to restart NoWM"""
     logging.info("Restarting...")
-    os.execvp(sys.argv[0], [sys.argv[0]])
+    os.execvp(sys.argv[0], sys.argv)
 
   def exit_wm(self, event):
     """Cleanly exit NoWM"""
@@ -94,6 +98,16 @@ class NoWM():
     logging.debug(f"Starting terminal ({self.TERMINAL})...")
     if(os.fork() == 0):
         os.execvp(self.TERMINAL[0], self.TERMINAL)
+        #os.system(f"sh -c 'time strace {self.TERMINAL[0]} > /tmp/t.log 2>&1'")
+        #sys.exit(0)
+
+  def handle_xeyes(self, event):
+    """Launch xeyes TODO remove"""
+    logging.debug(f"Starting xeyes...")
+    if(os.fork() == 0):
+        os.execvp("/usr/bin/xeyes", ["/usr/bin/xeyes"])
+        #os.system(f"sh -c 'time strace /usr/bin/xeyes > /tmp/t.log 2>&1'")
+        #sys.exit(0)
 
   def handle_browser(self, event):
     """Launch browser with xdg-open"""
@@ -104,7 +118,7 @@ class NoWM():
   def handle_alttab(self, event):
     """Cycle through windows"""
     logging.debug(f"Handling alt-tab. current index {self.cycle_window_index}")
-    logging.debug(f"windows: {[self.window_name(w) for w in self.window_order]}")
+    logging.debug(f"windows: {[self.get_window_name(w) for w in self.window_order]}")
     window = self.window_order[self.cycle_window_index]
     self.raise_window(window)
     self.cycle_window_index = (self.cycle_window_index + 1) % len(self.window_order)
@@ -112,9 +126,6 @@ class NoWM():
 
   def handle_left(self, event):
     """Tile window left half of screen"""
-    if event.state & X.Mod4Mask:
-        logging.warning("mod4 set")
-    logging.warning(f"LEFT {event}")
     root_geometry = self.screen.root.get_geometry()
     self.move_window_and_resize(window=event.child, x=0, y=0, width=root_geometry.width/2, height=root_geometry.height)
 
@@ -177,22 +188,29 @@ class NoWM():
     geo = window.get_geometry()
     if event.state & X.Mod4Mask:
       # Resize
-      self.move_window_and_resize(window=window, x=geo.x, y=geo.y, width=geo.width-self.MOVE_RESIZE_PIXELS, height=geo.height)
+      self.move_window_and_resize(window=window, x=geo.x, y=geo.y, width=geo.width+self.MOVE_RESIZE_PIXELS, height=geo.height)
     else:
       # Move
-      self.move_window_and_resize(window=window, x=geo.x-self.MOVE_RESIZE_PIXELS, y=geo.y, width=geo.width, height=geo.height)
+      self.move_window_and_resize(window=window, x=geo.x+self.MOVE_RESIZE_PIXELS, y=geo.y, width=geo.width, height=geo.height)
      
   def sync(self):
     self.display.sync()
 
-  def window_name(self, window):
+  def get_window_name(self, window):
     return window.get_wm_name()
+
+  def get_window_from_event(self, event):
+    if hasattr(event, 'child') and not self.is_root_window(event.child):
+      return window
+    if not self.is_root_window(event.window):
+      return event.window
+    return None
 
   def is_root_child_window(self, window):
     return window in self.screen.root.query_tree().children
 
   def raise_window(self, window):
-    #window.map()
+    window.map()
     window.set_input_focus(X.RevertToParent, 0)
     current_geometry = window.get_geometry()
     window.warp_pointer(int(current_geometry.x) + int(current_geometry.width/2),int(current_geometry.y) + int(current_geometry.height/2))
@@ -210,7 +228,7 @@ class NoWM():
     if not height:
       height = current_geometry.height
 
-    logging.debug(f"moving {self.window_name(window)} @ {current_geometry} to {x},{y},{width},{height}")
+    logging.debug(f"moving {self.get_window_name(window)} @ {current_geometry} to {x},{y},{width},{height}")
     window.configure(x=int(x), y=int(y), width=int(width), height=int(height))
     window.raise_window()
 
@@ -218,9 +236,25 @@ class NoWM():
   ### SETUP
   ###
 
+  def get_window_attributes(self, window):
+    try:
+      return window.get_attributes()
+    except:
+      return None
+
   def manage_window(self, window):
+    logging.debug(f"Managing window: name={self.get_window_name(window)} {window}")
     if window and self.is_root_child_window(window):
-      logging.debug(f"Managing window: {window.get_wm_name()}")
+      attrs = self.get_window_attributes(window)
+      if not attrs:
+        logging.debug(f"{window} has no attributes")
+        return
+      if attrs.override_redirect:
+        logging.debug(f"{window} has override_redirect")
+        return
+      if window in self.windows:
+        logging.debug(f"{window} is already managed ({self.windows})")
+
       self.windows[window] = {}
       self.window_order.append(window)
       self.raise_window(window)
@@ -228,13 +262,16 @@ class NoWM():
       mask = X.EnterWindowMask | X.LeaveWindowMask
       window.change_attributes(event_mask=mask)
     else:
-      logging.warning("No valid window provided")
+      logging.warning("No valid window provided or not a child of root...")
 
 
   def scan_windows(self):
+    self.windows.clear()
+    self.window_order.clear()
     for child in self.screen.root.query_tree().children:
-      if child.get_attributes().map_state:
-        self.manage_window(child)
+      if self.get_window_attributes(child).map_state:
+        if child not in self.windows:
+          self.manage_window(child)
 
   def configure_root_events(self):
     mask = (X.SubstructureRedirectMask | X.SubstructureNotifyMask | X.EnterWindowMask | X.LeaveWindowMask | X.FocusChangeMask)
@@ -293,7 +330,7 @@ class NoWM():
     window = event.window
     if self.is_root_window(window):
       return
-    logging.debug(f"enternotify: {event} {self.window_name(window)}")
+    logging.debug(f"enternotify: {event} {self.get_window_name(window)}")
     self.last_window = window
     window.raise_window()
     window.set_input_focus(X.RevertToParent, 0)
@@ -303,9 +340,18 @@ class NoWM():
     logging.debug(f"leavenotify: {event}")
 
   def handle_maprequest(self, event):
-    logging.debug(f"maprequest: {dir(event)} {event.__dict__} {self.window_name(event.window)} {self.window_name(event.parent)}")
-    window = event.window
+    logging.debug(f"maprequest: {dir(event)} {event.__dict__} {self.get_window_name(event.window)} {self.get_window_name(event.parent)}")
+    window = self.get_window_from_event(event)
+    logging.debug(f"MAPREQUEST REAL WINDOW: window: {window}")
+    window.map()
+
+
+  def handle_mapnotify(self, event):
+    logging.debug(f"mapnotify: {dir(event)} {event.__dict__} {self.get_window_name(event.window)}")
+    window = self.get_window_from_event(event)
+    logging.debug(f"MAPNOTIFY REAL WINDOW: window: {window}")
     if window:
+      window.map()
       root_geometry = self.screen.root.get_geometry()
       self.manage_window(window)
       self.move_window_and_resize(window, x=root_geometry.width/4, y=root_geometry.height/4, width=root_geometry.width/2, height=root_geometry.height/2)
@@ -313,7 +359,31 @@ class NoWM():
       logging.warning(f"maprequest: no event.window? {event}")
 
   def handle_configurerequest(self, event):
+    """Event handler for ConfigureRequest events."""
     logging.debug(event)
+    window = event.window
+    x, y = event.x, event.y
+    width, height = event.width, event.height
+    mask = event.value_mask
+    if mask == 0b1111:
+      window.configure(x=x, y=y, width=width, height=height)
+    elif mask == 0b1100:
+      window.configure(width=width, height=height)
+    elif mask == 0b0011:
+      window.configure(x=x, y=y)
+    elif mask == 0b01000000:
+      window.configure(event.stack_mode)
+
+  def handle_destroynotify(self, event):
+    """Event handler for DestoryNotify events."""
+    logging.debug(event)
+    window = event.window
+    if window in self.windows:
+      del windows[window]
+      window_order.remove(window)
+    else:
+      logging.debug(f"destroynotify for unmanaged window: {window}")
+
 
   def handle_event(self, event):
     # TODO this should be a map lookup, or even just introspect the object?
@@ -323,6 +393,8 @@ class NoWM():
       self.handle_keyrelease(event)
     elif event.type == X.ConfigureNotify:
       self.handle_configurenotify(event)
+    elif event.type == X.ConfigureRequest:
+      self.handle_configurerequest(event)
     elif event.type == X.FocusIn:
       self.handle_focusin(event)
     elif event.type == X.FocusOut:
@@ -331,10 +403,14 @@ class NoWM():
       self.handle_enternotify(event)
     elif event.type == X.LeaveNotify:
       self.handle_leavenotify(event)
+    elif event.type == X.MapNotify:
+      self.handle_mapnotify(event)
     elif event.type == X.MapRequest:
       self.handle_maprequest(event)
     elif event.type == X.ConfigureRequest:
       self.handle_configurerequest(event)
+    elif event.type == X.DestroyNotify:
+      self.handle_destroynotify(event)
     else:
       logging.debug(f"Unknown event: {event}")
 
@@ -344,7 +420,17 @@ class NoWM():
       self.handle_event(self.display.next_event())
 
 if __name__ == "__main__":
-  logging.basicConfig(level="DEBUG", format=">>%(asctime)s:%(levelname)s:%(name)s:%(funcName)s>> %(msg)s")
+  parser = argparse.ArgumentParser()
+  parser.add_argument("--verbose", "-v", help="Be more verbose", action="store_true")
+  parser.add_argument("--display", "-d", help="Explicitly set DISPLAY")
+  args = parser.parse_args()
+  if args.verbose:
+    loglevel = "DEBUG"
+  else:
+    loglevel = "INFO"
+  logging.basicConfig(level=loglevel, format=">>%(asctime)s:%(levelname)s:%(name)s:%(funcName)s>> %(msg)s")
+  if args.display:
+    os.environ["DISPLAY"] = args.display
   logging.info(f"starting {sys.argv[0]}")
   logging.debug(f"DISPLAY={os.getenv('DISPLAY', None)}")
   try:
