@@ -250,8 +250,8 @@ class NoWM():
       window.warp_pointer(int(current_geometry.x) + int(current_geometry.width/2),int(current_geometry.y) + int(current_geometry.height/2))
     self.sync()
 
-  def move_window_and_resize(self, window, x, y, width=None, height=None):
-    """Move a window, optionally resize"""
+  def move_window_and_resize(self, window, x, y, width=None, height=None, raise_window=True):
+    """Move a window, optionally resize, optionally raise"""
     if not window:
       logging.warning("no window passed")
       return
@@ -267,7 +267,10 @@ class NoWM():
 
     logging.debug(f"moving {self.get_window_name(window)} @ {current_geometry} to {x},{y},{width},{height}")
     window.configure(x=int(x), y=int(y), width=int(width), height=int(height))
-    window.raise_window()
+    if raise_window:
+      self.raise_window(window)
+    else:
+      self.sync()
 
   ###
   ### SETUP
@@ -421,15 +424,25 @@ class NoWM():
     elif mask == 0b01000000:
       window.configure(event.stack_mode)
 
-  def handle_destroynotify(self, event):
-    """Event handler for DestoryNotify events."""
-    logging.debug(event)
-    window = event.window
+  def unmanage_window(self, window):
+    logging.debug(f"unmanaging window: {window}")
     if window in self.windows:
       del self.windows[window]
       self.window_order.remove(window)
     else:
-      logging.warning(f"destroynotify for unmanaged window: {window}")
+      logging.warning(f"unmanage window for already unmanaged window: {window}")
+
+  def handle_destroynotify(self, event):
+    """Event handler for DestoryNotify events."""
+    logging.debug(event)
+    window = self.get_window_from_event(event)
+    self.unmanage_window(window)
+
+  def handle_unmapnotify(self, event):
+    """Event handler for UnmapNotify events."""
+    #logging.debug(event)
+    #window = self.get_window_from_event(event)
+    #self.unmanage_window(window)
 
 
   def handle_event(self, event):
@@ -458,6 +471,8 @@ class NoWM():
       self.handle_configurerequest(event)
     elif event.type == X.DestroyNotify:
       self.handle_destroynotify(event)
+    elif event.type == X.UnmapNotify:
+      self.handle_unmapnotify(event)
     else:
       logging.debug(f"Unconfigured event: {event}")
 
