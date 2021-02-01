@@ -73,13 +73,15 @@ class NoWM():
     self.cycle_window_index = 0
     self.scan_windows()
 
-    self.last_keycode = None
+    self.last_keysym = None
 
     self.keypress_handlers = {}
     self.keyrelease_handlers = {}
 
     self.configure_root_events()
     self.configure_key_handlers()
+
+    self.load_rcfile()
 
   ###
   ### EVENT HANDLERS
@@ -135,6 +137,26 @@ class NoWM():
     """Tile window right half of screen"""
     root_geometry = self.screen.root.get_geometry()
     self.move_window_and_resize(window=active_window, x=root_geometry.width / 2, y=0, width=root_geometry.width/2, height=root_geometry.height)
+
+  def handle_topleft(self, event, active_window):
+    """Tile window northwest quadrant of screen"""
+    root_geometry = self.screen.root.get_geometry()
+    self.move_window_and_resize(window=active_window, x=0, y=0, width=root_geometry.width/2, height=root_geometry.height/2)
+
+  def handle_topright(self, event, active_window):
+    """Tile window northeast quadrant of screen"""
+    root_geometry = self.screen.root.get_geometry()
+    self.move_window_and_resize(window=active_window, x=root_geometry.width/2, y=0, width=root_geometry.width/2, height=root_geometry.height/2)
+
+  def handle_bottomleft(self, event, active_window):
+    """Tile window southwest quadrant of screen"""
+    root_geometry = self.screen.root.get_geometry()
+    self.move_window_and_resize(window=active_window, x=0, y=root_geometry.height/2, width=root_geometry.width/2, height=root_geometry.height/2)
+
+  def handle_bottomright(self, event, active_window):
+    """Tile window southeast quadrant of screen"""
+    root_geometry = self.screen.root.get_geometry()
+    self.move_window_and_resize(window=active_window, x=root_geometry.width/2, y=root_geometry.height/2, width=root_geometry.width/2, height=root_geometry.height/2)
 
   def handle_return(self, event, active_window):
     """Maximize or un-maximize window"""
@@ -193,16 +215,12 @@ class NoWM():
 
   def handle_kill_window(self, event, active_window):
     """Kill window, must be pressed twice"""
-    keycode = self.display.keysym_to_keycode(XK.XK_x)
-    if active_window:
-      active_window.destroy()
-    return # TODO REMOVE
-    if self.last_keycode == keycode:
+    if self.last_keysym == 53:
       logging.debug(f"handling ACTUAL kill window {event}")
       if active_window:
         active_window.destroy()
     else:
-      logging.debug(f"handling FIRST (must press twice, got {event.detail} wanted {self.last_keycode}) kill window {event}")
+      logging.debug(f"handling FIRST (must press twice, got {self.last_keysym} wanted 53 kill window {event}")
 
      
   def sync(self):
@@ -267,6 +285,8 @@ class NoWM():
 
     logging.debug(f"moving {self.get_window_name(window)} @ {current_geometry} to {x},{y},{width},{height}")
     window.configure(x=int(x), y=int(y), width=int(width), height=int(height))
+    # Is this necessary?
+    window.clear_area(x=int(x), y=int(y), width=int(width), height=int(height))
     if raise_window:
       self.raise_window(window)
     else:
@@ -340,8 +360,8 @@ class NoWM():
 
   def handle_keypress(self, event):
     """Handle key press and dispatch to registered handler"""
-    self.last_keycode = self.display.keysym_to_keycode(event.detail)
-    logging.debug(f"got keypress event: {self.last_keycode} {event}")
+    self.last_keysym = event.detail
+    logging.debug(f"got keypress event: {self.last_keysym} {event}")
     func = self.keypress_handlers.get(event.detail, None)
     if func:
       window = self.get_window_from_event(event)
@@ -476,6 +496,20 @@ class NoWM():
     else:
       logging.debug(f"Unconfigured event: {event}")
 
+  def load_rcfile(self):
+    rcfile=os.path.expanduser("~/.nowmrc")
+    try:
+      with open(rcfile, "r") as f:
+        rcexec = f.read()
+    except:
+      logging.info(f"No rc file read from {rcfile}")
+      return
+
+    try:
+      exec(rcexec)
+    except Exception as e:
+      logging.fatal(f"exec {rcfile} failed:\n{e}")
+      sys.exit(1)
 
   def main_loop(self):
     while True:
