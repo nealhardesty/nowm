@@ -93,9 +93,12 @@ class NoWM():
     os.execvp(sys.argv[0], sys.argv)
 
   def exit_wm(self, event, _):
-    """Cleanly exit NoWM"""
-    logging.info("Exiting...")
-    sys.exit(0)
+    """Cleanly exit NoWM.  Must press twice."""
+    if self.last_keysym == 22:
+      logging.info(f"Exiting {self.last_keysym}...")
+      sys.exit(0)
+    else:
+      logging.debug(f"handling FIRST (must press twice, got {self.last_keysym} wanted 53 exit wm {event}")
 
   def handle_terminal(self, event, _):
     """Launch terminal using x-terminal-emulator"""
@@ -360,7 +363,6 @@ class NoWM():
 
   def handle_keypress(self, event):
     """Handle key press and dispatch to registered handler"""
-    self.last_keysym = event.detail
     logging.debug(f"got keypress event: {self.last_keysym} {event}")
     func = self.keypress_handlers.get(event.detail, None)
     if func:
@@ -368,6 +370,7 @@ class NoWM():
       func(event, window)
     #else:
     #  logging.debug(f"No keypress key_handler registered for {XK.keysym_to_string}")
+    self.last_keysym = event.detail
 
   def handle_keyrelease(self, event):
     """Handle key depress and dispatch to registered handler"""
